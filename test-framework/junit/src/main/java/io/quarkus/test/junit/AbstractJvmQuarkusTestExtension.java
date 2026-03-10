@@ -1,7 +1,5 @@
 package io.quarkus.test.junit;
 
-import static io.quarkus.runtime.configuration.ConfigUtils.configBuilder;
-
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.List;
@@ -19,8 +17,10 @@ import io.quarkus.bootstrap.app.RunningQuarkusApplication;
 import io.quarkus.deployment.dev.testing.TestConfig;
 import io.quarkus.deployment.dev.testing.TestConfigCustomizer;
 import io.quarkus.runtime.LaunchMode;
+import io.quarkus.runtime.configuration.QuarkusConfigBuilderCustomizer;
 import io.smallrye.config.Config;
 import io.smallrye.config.SmallRyeConfig;
+import io.smallrye.config.SmallRyeConfigBuilder;
 import io.smallrye.config.SmallRyeConfigProviderResolver;
 
 public class AbstractJvmQuarkusTestExtension extends AbstractQuarkusTestWithContextExtension
@@ -53,12 +53,13 @@ public class AbstractJvmQuarkusTestExtension extends AbstractQuarkusTestWithCont
         ClassLoader classLoader = AbstractJvmQuarkusTestExtension.class.getClassLoader();
         if (classLoader != ClassLoader.getSystemClassLoader()) {
             LaunchMode current = LaunchMode.current();
-            LaunchMode.set(LaunchMode.TEST);
-            SmallRyeConfig config = configBuilder()
-                    .forClassLoader(classLoader)
-                    .withCustomizers(new TestConfigCustomizer(LaunchMode.TEST))
-                    .build();
-            LaunchMode.set(current);
+            SmallRyeConfig config;
+            try {
+                LaunchMode.set(LaunchMode.TEST);
+                config = buildBootstrapTestConfig(classLoader);
+            } finally {
+                LaunchMode.set(current);
+            }
 
             // Multiple Test may use the same ClassLoader, and each will instantiate a new AbstractJvmQuarkusTestExtension.
             // In these cases, the Config is already registered, so it is just easier to release it and set it again
@@ -66,6 +67,19 @@ public class AbstractJvmQuarkusTestExtension extends AbstractQuarkusTestWithCont
             resolver.releaseConfig(ClassLoader.getSystemClassLoader());
             resolver.registerConfig(config, ClassLoader.getSystemClassLoader());
         }
+    }
+
+    static SmallRyeConfig buildBootstrapTestConfig(ClassLoader classLoader) {
+        // Avoid discovered application sources/interceptors here, otherwise the extension constructor can fail
+        // while trying to initialize the full app config too early.
+        return new SmallRyeConfigBuilder()
+                .forClassLoader(classLoader)
+                .withCustomizers(new QuarkusConfigBuilderCustomizer())
+                .addDiscoveredConverters()
+                .addDefaultInterceptors()
+                .addDefaultSources()
+                .withCustomizers(new TestConfigCustomizer(LaunchMode.TEST))
+                .build();
     }
 
     // TODO is it nicer to pass in the test class, or invoke the getter twice?
